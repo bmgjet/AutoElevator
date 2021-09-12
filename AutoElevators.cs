@@ -15,6 +15,7 @@ namespace Oxide.Plugins
         private const string USE_PERM = "AutoElevators.use";
         private List<uint> Up = new List<uint>();
         public List<Esettings> ElevatorUp = new List<Esettings>();
+        public float ScanRadius = 0.8f;
 
         class SaveData
         {
@@ -194,11 +195,11 @@ namespace Oxide.Plugins
             int index = 0;
             foreach (Esettings bn in ElevatorUp)
             {
-                index++;
-                if (bn.netid == id)
+                 if (bn.netid == id)
                 {
                     return index;
                 }
+                index++;
             }
             return -1;
         }
@@ -268,11 +269,23 @@ namespace Oxide.Plugins
 
         object OnButtonPress(PressButton button, BasePlayer player)
         {
-          List<Elevator> e = FindElevator(button.transform.position, 0.8f,Vector3.down);
-            foreach(Elevator elevator in e)
+            //Scan down path.
+          List<Elevator> e = FindElevator(button.transform.position, ScanRadius, Vector3.down);
+            foreach (Elevator elevator in e)
             {
                 Esettings es = FindServerElevator(elevator.net.ID);
-                if(es != null)
+                if (es != null)
+                {
+                    ElevatorLogic(elevator);
+                    return null;
+                }
+            }
+            //Scan up path
+            List<Elevator> e2 = FindElevator(button.transform.position, ScanRadius, Vector3.up);
+            foreach (Elevator elevator in e2)
+            {
+                Esettings es = FindServerElevator(elevator.net.ID);
+                if (es != null)
                 {
                     ElevatorLogic(elevator);
                     return null;
@@ -281,135 +294,130 @@ namespace Oxide.Plugins
             return null;
         }
 
-            [ChatCommand("elevator")]
+        [ChatCommand("elevator")]
         private void SetSettings(BasePlayer player, string command, string[] args)
         {
-                if (player == null || !player.IPlayer.HasPermission(USE_PERM)) return;
-                if (args == null || args.Length == 0 || args.Length < 2)
-                {
-                    player.ChatMessage("Help:\r\nYou must provide settings such as\r\n/elevator arg value\r\nSettings:\r\nfloors int (use neg to go down)\r\nreturn bool (true/flase auto return)\r\ndelay int (sec before return)\r\nreset yes (resets all server elevators)");
-                }
+            if (player == null || !player.IPlayer.HasPermission(USE_PERM)) return;
+            if (args == null || args.Length == 0 || args.Length == 1 || args.Length >= 3)
+            {
+                player.ChatMessage("Help:\r\nYou must provide settings such as\r\n/elevator arg value\r\nSettings:\r\nfloors int (use neg to go down)\r\nreturn bool (true/flase auto return)\r\ndelay int (sec before return)\r\nspeed float (speed elevator moves)\r\nreset yes (resets all server elevators)");
+                return;
+            }
             if (ElevatorUp.Count == 0)
             {
                 player.ChatMessage("_data file not found");
                 return;
             }
-                List<Elevator> elevatorList = FindElevator(player.transform.position, 3f,Vector3.one);
-                int index = 0;
-                foreach (Elevator elevator in elevatorList)
-                {
-                index++;
+            if (args[0] == "reset" && args[1] == "yes")
+            {
+                player.ChatMessage("Resetting Data");
+                resetdata();
+                return;
+            }
+
+            int index = 0;
+            Elevator entity = null;
+            List<Elevator> e = FindElevator(player.transform.position, 0.8f, Vector3.down);
+            foreach (Elevator elevator in e)
+            {
                 Esettings es = FindServerElevator(elevator.net.ID);
                 if (es != null)
                 {
                     index = FindElevatorIndex(elevator.net.ID);
-                    break;
+                    entity = elevator;
                 }
-                }
-            if (elevatorList.Count == 0 && args[0] != "reset")
+            }
+            if(entity != null)
+            {
+                if (Up.Contains(entity.net.ID))
                 {
-                    player.ChatMessage("No Elevators nearby!");
+                    player.ChatMessage("Elevator must be at its base height to change setting");
                     return;
                 }
-                if (args[0] == "reset" && args[1] == "yes")
-                {
-                    player.ChatMessage("Resetting Data");
-                    resetdata();
-                    return;
-                }
-                foreach (var entity in elevatorList)
-                {
-                    Elevator x = entity as Elevator;
-                    if (x == null)
-                    {
-                        continue;
-                    }
-                    if (Up.Contains(x.net.ID))
-                    {
-                        player.ChatMessage("Elevator must be at its base height to change setting");
-                        return;
-                    }
-                    player.ChatMessage(x.net.ID.ToString());
                 if (index >= ElevatorUp.Count || index == -1)
                 {
-                    player.ChatMessage("Index not found");
+                    player.ChatMessage("Cant find index");
                     return;
                 }
-
-                    int newfloors = 2;
-                    int newdelay = 60;
-                    bool newreturn = true;
-                    float newspeed = 1.5f;
-                    switch (args[0])
-                    {
-                        case "floors":
-                            try
+                int newfloors = 2;
+                int newdelay = 60;
+                bool newreturn = true;
+                float newspeed = 1.5f;
+                switch (args[0])
+                {
+                    case "floors":
+                        try
+                        {
+                            newfloors = int.Parse(args[1]);
+                            if (newfloors == 1 || newfloors == 0)
                             {
-                                newfloors = int.Parse(args[1]);
-                                if (newfloors == 1 || newfloors == 0)
-                                {
-                                    newfloors = 2;
-                                }
-                                ElevatorUp[index].Floors = newfloors;
-                                player.ChatMessage("Changed floors to " + newfloors.ToString());
+                                newfloors = 2;
+                            }
+                            ElevatorUp[index].Floors = newfloors;
+                            player.ChatMessage("Changed floors to " + newfloors.ToString());
+                            return;
+                        }
+                        catch
+                        {
+                            player.ChatMessage("Must set a number as floors");
+                            return;
+                        }
+                    case "return":
+                        try
+                        {
+                            newreturn = Boolean.Parse(args[1]);
+                            ElevatorUp[index].AutoReturn = newreturn;
+                            player.ChatMessage("Changed Auto return to " + newreturn.ToString());
+                            return;
+                        }
+                        catch
+                        {
+                            player.ChatMessage("Must set true / false");
+                            return;
+                        }
+                    case "delay":
+                        try
+                        {
+                            newdelay = int.Parse(args[1]);
+                            if (newdelay < 5)
+                            {
+                                player.ChatMessage("Use a value greater than 5");
                                 return;
                             }
-                            catch
+                            ElevatorUp[index].ReturnTime = newdelay;
+                            player.ChatMessage("Changed Auto return delay to " + newdelay.ToString() + " sec");
+                            return;
+                        }
+                        catch
+                        {
+                            player.ChatMessage("Must set a number as seconds of delay");
+                            return;
+                        }
+                    case "speed":
+                        try
+                        {
+                            newspeed = (float)double.Parse(args[1]);
+                            if (newspeed <= 0)
                             {
-                                player.ChatMessage("Must set a number as floors");
+                                player.ChatMessage("Use a value greater than 1");
                                 return;
                             }
-                        case "return":
-                            try
-                            {
-                                newreturn = Boolean.Parse(args[1]);
-                                ElevatorUp[index].AutoReturn = newreturn;
-                                player.ChatMessage("Changed Auto return to " + newreturn.ToString());
-                                return;
-                            }
-                            catch
-                            {
-                                player.ChatMessage("Must set true / false");
-                                return;
-                            }
-                        case "delay":
-                            try
-                            {
-                                newdelay = int.Parse(args[1]);
-                                if (newdelay < 5)
-                                {
-                                    player.ChatMessage("Use a value greater than 5");
-                                    return;
-                                }
-                                ElevatorUp[index].ReturnTime = newdelay;
-                                player.ChatMessage("Changed Auto return delay to " + newdelay.ToString() + " sec");
-                                return;
-                            }
-                            catch
-                            {
-                                player.ChatMessage("Must set a number as seconds of delay");
-                                return;
-                            }
-                        case "speed":
-                            try
-                            {
-                                newspeed = (float)double.Parse(args[1]);
-                                if (newspeed <= 0)
-                                {
-                                    player.ChatMessage("Use a value greater than 1");
-                                    return;
-                                }
-                                ElevatorUp[index].Speed = newspeed;
-                                player.ChatMessage("Changed elevator speed to " + newspeed.ToString() + " per m");
-                                return;
-                            }
-                            catch
-                            {
-                                player.ChatMessage("Must set a float as speed per m");
-                                return;
-                            }
-                    }
+                            ElevatorUp[index].Speed = newspeed;
+                            player.ChatMessage("Changed elevator speed to " + newspeed.ToString() + " per m");
+                            return;
+                        }
+                        catch
+                        {
+                            player.ChatMessage("Must set a float as speed per m");
+                            return;
+                        }
                 }
+            }
+            else
+            {
+                player.ChatMessage("No Elevator Found, Stand on it and look down");
+                return;
+            }
         }
         public class Esettings
         {
