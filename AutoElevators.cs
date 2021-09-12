@@ -39,9 +39,15 @@ namespace Oxide.Plugins
             {
                 WriteSaveData();
             }
-            timer.Once(5f, () => {
+            timer.Once(5f, () =>
+            {
                 ReloadData();
             });
+        }
+        void OnServerSave()
+        {
+            _data.ElevatorUp = ElevatorUp;
+            WriteSaveData();
         }
 
         void Unload()
@@ -120,13 +126,30 @@ namespace Oxide.Plugins
         public void ClearElevators()
         {
             //Delete any exsisting elevators
+            int test = 0;
             foreach (BaseNetworkable bn in BaseNetworkable.serverEntities)
             {
                 if (bn.prefabID == 3845190333)
                 {
-                    bn.Kill();
+                    //Scan area to make sure not train entance
+                    var hits = Physics.SphereCastAll(bn.transform.position, 6f, Vector3.down);
+                    bool train = false;
+                    foreach (var hit in hits)
+                    {
+                        if (hit.GetEntity()?.prefabID == 1802909967)
+                        {
+                            test++;
+                            train = true;
+                            break;
+                        }
+                    }
+                    if (!train)
+                    {
+                      bn.Kill();
+                    }
                 }
             }
+            Puts("Train Elevators Found " +test.ToString());
         }
 
         private List<Elevator> FindElevator(Vector3 pos, float radius)
