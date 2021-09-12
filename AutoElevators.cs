@@ -75,7 +75,7 @@ namespace Oxide.Plugins
                     Elevator el = CreateElevator(pd.position, pd.rotation);
                     if (el == null)
                     {
-                        Puts("Fault");
+                        Puts("Fault creating elevator!");
                     }
                     foreach (Esettings es in _data.ElevatorUp)
                     {
@@ -84,7 +84,7 @@ namespace Oxide.Plugins
                         {
                             //create with settings
                             update.Add(el.net.ID);
-                            _data.ElevatorUp.Add(new Esettings(el.transform.position, el.transform.rotation.ToEuler(), el.net.ID, es.Floors, es.ReturnTime, es.AutoReturn));
+                            _data.ElevatorUp.Add(new Esettings(el.transform.position, el.transform.rotation.ToEuler(), el.net.ID, es.Floors, es.ReturnTime, es.AutoReturn,es.Speed));
                             flag = true;
                             break;
                         }
@@ -94,6 +94,7 @@ namespace Oxide.Plugins
                         //create new
                         _data.ElevatorUp.Add(new Esettings(el.transform.position, el.transform.rotation.ToEuler(), el.net.ID));
                     }
+                    el.SendNetworkUpdateImmediate();
                 }
             }
             //clean up
@@ -118,6 +119,7 @@ namespace Oxide.Plugins
         void resetdata()
         {
             Puts("Resettings datafile");
+            ElevatorUp.Clear();
             _data.ElevatorUp.Clear();
             WriteSaveData();
             ReloadData();
@@ -152,9 +154,9 @@ namespace Oxide.Plugins
             Puts("Train Elevators Found " +test.ToString());
         }
 
-        private List<Elevator> FindElevator(Vector3 pos, float radius)
+        private List<Elevator> FindElevator(Vector3 pos, float radius, Vector3 dir)
         {
-            var hits = Physics.SphereCastAll(pos, 0.5f, Vector3.down);
+            var hits = Physics.SphereCastAll(pos, radius, dir);
             var x = new List<Elevator>();
             foreach (var hit in hits)
             {
@@ -187,7 +189,27 @@ namespace Oxide.Plugins
             return null;
         }
 
+        public int FindElevatorIndex(uint id)
+        {
+            int index = 0;
+            foreach (Esettings bn in ElevatorUp)
+            {
+                index++;
+                if (bn.netid == id)
+                {
+                    return index;
+                }
+            }
+            return -1;
+        }
+
         object OnElevatorMove(Elevator e)
+        {
+            ElevatorLogic(e);
+            return null;
+        }
+
+        void ElevatorLogic(Elevator e)
         {
             //Check if its a replaced elevator
             Esettings ThisElevator = FindServerElevator(e.net.ID);
@@ -203,7 +225,6 @@ namespace Oxide.Plugins
                     GoToFloor(1, e, ThisElevator);
                 }
             }
-            return null;
         }
 
         void GoToFloor(int floor, Elevator e, Esettings eset)
@@ -212,6 +233,7 @@ namespace Oxide.Plugins
             {
                 return;
             }
+            e.LiftSpeedPerMetre = eset.Speed;
             Vector3 vector = e.transform.InverseTransformPoint(e.transform.position + new Vector3(0, floor, 0));
             float timeToTravel = e.TimeToTravelDistance(Mathf.Abs(e.liftEntity.transform.localPosition.y + vector.y));
             LeanTween.moveLocalY(e.liftEntity.gameObject, vector.y, timeToTravel);
@@ -244,18 +266,47 @@ namespace Oxide.Plugins
             }
         }
 
-        [ChatCommand("elevator")]
+        object OnButtonPress(PressButton button, BasePlayer player)
+        {
+          List<Elevator> e = FindElevator(button.transform.position, 0.8f,Vector3.down);
+            foreach(Elevator elevator in e)
+            {
+                Esettings es = FindServerElevator(elevator.net.ID);
+                if(es != null)
+                {
+                    ElevatorLogic(elevator);
+                    return null;
+                }
+            }
+            return null;
+        }
+
+            [ChatCommand("elevator")]
         private void SetSettings(BasePlayer player, string command, string[] args)
         {
-            try
-            {
                 if (player == null || !player.IPlayer.HasPermission(USE_PERM)) return;
-                if (args.Length < 2 || args.Length < 1)
+                if (args == null || args.Length == 0 || args.Length < 2)
                 {
                     player.ChatMessage("Help:\r\nYou must provide settings such as\r\n/elevator arg value\r\nSettings:\r\nfloors int (use neg to go down)\r\nreturn bool (true/flase auto return)\r\ndelay int (sec before return)\r\nreset yes (resets all server elevators)");
                 }
-                var elevatorList = FindElevator(player.transform.position, 3);
-                if (elevatorList.Count == 0 && args[0] != "reset")
+            if (ElevatorUp.Count == 0)
+            {
+                player.ChatMessage("_data file not found");
+                return;
+            }
+                List<Elevator> elevatorList = FindElevator(player.transform.position, 3f,Vector3.one);
+                int index = 0;
+                foreach (Elevator elevator in elevatorList)
+                {
+                index++;
+                Esettings es = FindServerElevator(elevator.net.ID);
+                if (es != null)
+                {
+                    index = FindElevatorIndex(elevator.net.ID);
+                    break;
+                }
+                }
+            if (elevatorList.Count == 0 && args[0] != "reset")
                 {
                     player.ChatMessage("No Elevators nearby!");
                     return;
@@ -278,18 +329,17 @@ namespace Oxide.Plugins
                         player.ChatMessage("Elevator must be at its base height to change setting");
                         return;
                     }
-                    int index = 0;
-                    foreach (Esettings es in ElevatorUp)
-                    {
-                        if (es.netid == x.net.ID)
-                        {
-                            break;
-                        }
-                        index++;
-                    }
+                    player.ChatMessage(x.net.ID.ToString());
+                if (index >= ElevatorUp.Count || index == -1)
+                {
+                    player.ChatMessage("Index not found");
+                    return;
+                }
+
                     int newfloors = 2;
                     int newdelay = 60;
                     bool newreturn = true;
+                    float newspeed = 1.5f;
                     switch (args[0])
                     {
                         case "floors":
@@ -340,10 +390,26 @@ namespace Oxide.Plugins
                                 player.ChatMessage("Must set a number as seconds of delay");
                                 return;
                             }
+                        case "speed":
+                            try
+                            {
+                                newspeed = (float)double.Parse(args[1]);
+                                if (newspeed <= 0)
+                                {
+                                    player.ChatMessage("Use a value greater than 1");
+                                    return;
+                                }
+                                ElevatorUp[index].Speed = newspeed;
+                                player.ChatMessage("Changed elevator speed to " + newspeed.ToString() + " per m");
+                                return;
+                            }
+                            catch
+                            {
+                                player.ChatMessage("Must set a float as speed per m");
+                                return;
+                            }
                     }
                 }
-            }
-            catch { }
         }
         public class Esettings
         {
@@ -358,8 +424,9 @@ namespace Oxide.Plugins
                 this.Floors = 2;
                 this.ReturnTime = 60;
                 this.AutoReturn = true;
+                this.Speed = 1.5f;
             }
-            public Esettings(Vector3 p, Vector3 r, uint n, int f, int rt, bool at)
+            public Esettings(Vector3 p, Vector3 r, uint n, int f, int rt, bool at, float s)
             {
                 this.pos = p;
                 this.rot = r;
@@ -367,6 +434,7 @@ namespace Oxide.Plugins
                 this.Floors = f;
                 this.ReturnTime = rt;
                 this.AutoReturn = at;
+                this.Speed = s;
             }
             public uint netid;
             public Vector3 pos;
@@ -374,6 +442,7 @@ namespace Oxide.Plugins
             public int Floors;
             public int ReturnTime;
             public bool AutoReturn;
+            public float Speed;
         }
     }
 }
