@@ -85,7 +85,7 @@ namespace Oxide.Plugins
                         {
                             //create with settings
                             update.Add(el.net.ID);
-                            _data.ElevatorUp.Add(new Esettings(el.transform.position, el.transform.rotation.ToEuler(), el.net.ID, es.Floors, es.ReturnTime, es.AutoReturn,es.Speed));
+                            _data.ElevatorUp.Add(new Esettings(el.transform.position, el.transform.rotation.ToEuler(), el.net.ID, es.Floors, es.ReturnTime, es.AutoReturn, es.Speed,es.Direction,es.Custompos));
                             flag = true;
                             break;
                         }
@@ -148,11 +148,11 @@ namespace Oxide.Plugins
                     }
                     if (!train)
                     {
-                      bn.Kill();
+                        bn.Kill();
                     }
                 }
             }
-            Puts("Train Elevators Found " +test.ToString());
+            Puts("Train Elevators Found " + test.ToString());
         }
 
         private List<Elevator> FindElevator(Vector3 pos, float radius, Vector3 dir)
@@ -195,7 +195,7 @@ namespace Oxide.Plugins
             int index = 0;
             foreach (Esettings bn in ElevatorUp)
             {
-                 if (bn.netid == id)
+                if (bn.netid == id)
                 {
                     return index;
                 }
@@ -228,19 +228,70 @@ namespace Oxide.Plugins
             }
         }
 
-        void GoToFloor(int floor, Elevator e, Esettings eset)
+        void path(int floor, Elevator e, Esettings eset)
         {
-            if(e.HasFlag(BaseEntity.Flags.Busy))
+            Vector3 vector = new Vector3(0, 0, 0);
+            Puts(floor.ToString());
+            if (floor == 1)
             {
-                return;
+                vector = e.transform.InverseTransformPoint(e.transform.position + new Vector3(0, 1, 0));
+            }
+            else
+            {
+                vector = e.transform.InverseTransformPoint(e.transform.position + eset.Custompos);
             }
             e.LiftSpeedPerMetre = eset.Speed;
-            Vector3 vector = e.transform.InverseTransformPoint(e.transform.position + new Vector3(0, floor, 0));
-            float timeToTravel = e.TimeToTravelDistance(Mathf.Abs(e.liftEntity.transform.localPosition.y + vector.y));
-            LeanTween.moveLocalY(e.liftEntity.gameObject, vector.y, timeToTravel);
+            float timeToTravel = e.TimeToTravelDistance(Vector3.Distance(e.transform.position, vector));
+            LeanTween.moveLocal(e.liftEntity.gameObject, vector, timeToTravel);
             e.SendNetworkUpdateImmediate();
             e.SetFlag(global::BaseEntity.Flags.Busy, true, false, true);
             e.Invoke(new Action(e.ClearBusy), timeToTravel);
+            ElevatorEndLogic(floor, e, eset, timeToTravel);
+        }
+
+        void GoToFloor(int floor, Elevator e, Esettings eset, int axis = 0)
+        {
+            if (e.HasFlag(BaseEntity.Flags.Busy))
+            {
+                return;
+            }
+            axis = eset.Direction;
+            if (axis == 3)
+            {
+                path(floor, e, eset);
+                return;
+            }
+            e.LiftSpeedPerMetre = eset.Speed;
+            Vector3 vector = new Vector3(0, 0, 0);
+            float timeToTravel = 0f;
+            switch (axis)
+            {
+
+                case 0:
+                    vector = e.transform.InverseTransformPoint(e.transform.position + new Vector3(0, floor, 0));
+                    timeToTravel = e.TimeToTravelDistance(Mathf.Abs(e.liftEntity.transform.localPosition.y + vector.y));
+                    LeanTween.moveLocalY(e.liftEntity.gameObject, vector.y, timeToTravel);
+                    break;
+                case 1:
+                    vector = e.transform.InverseTransformPoint(e.transform.position + new Vector3(floor, 0, 0));
+                    timeToTravel = e.TimeToTravelDistance(Mathf.Abs(e.liftEntity.transform.localPosition.x + vector.x));
+                    LeanTween.moveLocalX(e.liftEntity.gameObject, vector.x, timeToTravel);
+                    break;
+                case 2:
+                    vector = e.transform.InverseTransformPoint(e.transform.position + new Vector3(0, 0, floor));
+                    timeToTravel = e.TimeToTravelDistance(Mathf.Abs(e.liftEntity.transform.localPosition.z + vector.z));
+                    LeanTween.moveLocalZ(e.liftEntity.gameObject, vector.z, timeToTravel);
+                    break;
+
+            }
+            e.SendNetworkUpdateImmediate();
+            e.SetFlag(global::BaseEntity.Flags.Busy, true, false, true);
+            e.Invoke(new Action(e.ClearBusy), timeToTravel);
+            ElevatorEndLogic(floor, e, eset, timeToTravel);
+        }
+
+        private void ElevatorEndLogic(int floor, Elevator e, Esettings eset, float returndelay)
+        {
             if (floor == 1)
             {
                 if (Up.Contains(e.net.ID))
@@ -257,7 +308,7 @@ namespace Oxide.Plugins
             }
             if (eset.AutoReturn)
             {
-                timer.Once(eset.ReturnTime + timeToTravel, () =>
+                timer.Once(eset.ReturnTime + returndelay, () =>
                 {
                     if (Up.Contains(e.net.ID))
                     {
@@ -270,7 +321,7 @@ namespace Oxide.Plugins
         object OnButtonPress(PressButton button, BasePlayer player)
         {
             //Scan down path.
-          List<Elevator> e = FindElevator(button.transform.position, ScanRadius, Vector3.down);
+            List<Elevator> e = FindElevator(button.transform.position, ScanRadius, Vector3.down);
             foreach (Elevator elevator in e)
             {
                 Esettings es = FindServerElevator(elevator.net.ID);
@@ -300,7 +351,7 @@ namespace Oxide.Plugins
             if (player == null || !player.IPlayer.HasPermission(USE_PERM)) return;
             if (args == null || args.Length == 0 || args.Length == 1 || args.Length >= 3)
             {
-                player.ChatMessage("Help:\r\nYou must provide settings such as\r\n/elevator arg value\r\nSettings:\r\nfloors int (use neg to go down)\r\nreturn bool (true/flase auto return)\r\ndelay int (sec before return)\r\nspeed float (speed elevator moves)\r\nreset yes (resets all server elevators)");
+                player.ChatMessage("Help:\r\nYou must provide settings such as\r\n/elevator arg value\r\nSettings:\r\nfloors int (use neg to go down)\r\nreturn bool (true/flase auto return)\r\ndelay int (sec before return)\r\nspeed float (speed elevator moves)\r\ndirection int (0 = y, 1 = x, 2 = z)\r\nreset yes (resets all server elevators)");
                 return;
             }
             if (ElevatorUp.Count == 0)
@@ -312,6 +363,11 @@ namespace Oxide.Plugins
             {
                 player.ChatMessage("Resetting Data");
                 resetdata();
+                return;
+            }
+            if (args[0] == "pos" && args[1] == "get")
+            {
+                player.ChatMessage("You are currently @ " + player.transform.position.ToString());
                 return;
             }
 
@@ -327,7 +383,7 @@ namespace Oxide.Plugins
                     entity = elevator;
                 }
             }
-            if(entity != null)
+            if (entity != null)
             {
                 if (Up.Contains(entity.net.ID))
                 {
@@ -343,6 +399,7 @@ namespace Oxide.Plugins
                 int newdelay = 60;
                 bool newreturn = true;
                 float newspeed = 1.5f;
+                int newdirection = 0;
                 switch (args[0])
                 {
                     case "floors":
@@ -411,6 +468,39 @@ namespace Oxide.Plugins
                             player.ChatMessage("Must set a float as speed per m");
                             return;
                         }
+                    case "direction":
+                        try
+                        {
+                            newdirection = int.Parse(args[1]);
+                            if (newdirection == 0 || newdirection == 1 || newdirection == 2 || newdirection == 3)
+                            {
+                                ElevatorUp[index].Direction = newdirection;
+                                player.ChatMessage("Changed elevator direction");
+                                return;
+
+                            }
+                            player.ChatMessage("Use a value of 0, 1 or 2");
+                            return;
+                        }
+                        catch
+                        {
+                            player.ChatMessage("Must set a int as direction 0 = y, 1 = x, 2 = z");
+                            return;
+                        }
+                    case "position":
+                        try
+                        {
+                            string[] customposition = args[1].Split('|');
+                            Vector3 newcustompos = new Vector3(float.Parse(customposition[0]), float.Parse(customposition[1]), float.Parse(customposition[2]));
+                            ElevatorUp[index].Custompos = newcustompos;
+                            player.ChatMessage("Custom position set " + newcustompos.ToString());
+                            return;
+                        }
+                        catch
+                        {
+                            player.ChatMessage("Please provide a vector floats seperated by | such as x|y|z");
+                            return;
+                        }
                 }
             }
             else
@@ -433,8 +523,10 @@ namespace Oxide.Plugins
                 this.ReturnTime = 60;
                 this.AutoReturn = true;
                 this.Speed = 1.5f;
+                this.Direction = 0;
+                this.Custompos = new Vector3(0, 0, 0);
             }
-            public Esettings(Vector3 p, Vector3 r, uint n, int f, int rt, bool at, float s)
+            public Esettings(Vector3 p, Vector3 r, uint n, int f, int rt, bool at, float s, int d, Vector3 c)
             {
                 this.pos = p;
                 this.rot = r;
@@ -443,6 +535,8 @@ namespace Oxide.Plugins
                 this.ReturnTime = rt;
                 this.AutoReturn = at;
                 this.Speed = s;
+                this.Direction = d;
+                this.Custompos = c;
             }
             public uint netid;
             public Vector3 pos;
@@ -451,6 +545,8 @@ namespace Oxide.Plugins
             public int ReturnTime;
             public bool AutoReturn;
             public float Speed;
+            public int Direction;
+            public Vector3 Custompos;
         }
     }
 }
