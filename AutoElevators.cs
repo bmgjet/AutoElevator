@@ -11,11 +11,11 @@ namespace Oxide.Plugins
 
     public class AutoElevators : RustPlugin
     {
-        private static SaveData _data;
-        private const string USE_PERM = "AutoElevators.use";
-        private List<uint> Up = new List<uint>();
-        public List<Esettings> ElevatorUp = new List<Esettings>();
-        public float ScanRadius = 0.8f;
+        private static SaveData _data; //Save Data for between server restarts
+        private const string USE_PERM = "AutoElevators.use"; //Permission required for /elevator chat commands
+        private List<uint> Up = new List<uint>(); //Temp holder of what elevators are in there triggered position
+        public List<Esettings> ElevatorUp = new List<Esettings>(); //Local settings file same as saved data
+        public float ScanRadius = 0.8f; //Radius to use when buttons scan for elevator.
 
         class SaveData
         {
@@ -40,6 +40,7 @@ namespace Oxide.Plugins
             {
                 WriteSaveData();
             }
+            //Delay in loading data for when server restarts some times elevators wouldnt be fully spawned in.
             timer.Once(5f, () =>
             {
                 ReloadData();
@@ -83,7 +84,7 @@ namespace Oxide.Plugins
                         //Check for settings
                         if (es.pos == el.transform.position)
                         {
-                            //create with settings
+                            //create with set settings
                             update.Add(el.net.ID);
                             _data.ElevatorUp.Add(new Esettings(el.transform.position, el.transform.rotation.ToEuler(), el.net.ID, es.Floors, es.ReturnTime, es.AutoReturn, es.Speed,es.Direction,es.Custompos));
                             flag = true;
@@ -92,13 +93,13 @@ namespace Oxide.Plugins
                     }
                     if (!flag)
                     {
-                        //create new
+                        //create new with default settings
                         _data.ElevatorUp.Add(new Esettings(el.transform.position, el.transform.rotation.ToEuler(), el.net.ID));
                     }
                     el.SendNetworkUpdateImmediate();
                 }
             }
-            //clean up
+            //clean up old netids from last session
             if (flag)
             {
                 int count = _data.ElevatorUp.Count;
@@ -114,11 +115,13 @@ namespace Oxide.Plugins
             }
             Puts("ReloadData");
             WriteSaveData();
+            //sync save data to local data.
             ElevatorUp = _data.ElevatorUp;
         }
 
         void resetdata()
         {
+            //Clears data for a fresh start/map
             Puts("Resettings datafile");
             ElevatorUp.Clear();
             _data.ElevatorUp.Clear();
@@ -148,6 +151,7 @@ namespace Oxide.Plugins
                     }
                     if (!train)
                     {
+                        //remove elevator if not train entrance since will be replaced by plugin.
                         bn.Kill();
                     }
                 }
@@ -206,23 +210,26 @@ namespace Oxide.Plugins
 
         object OnElevatorMove(Elevator e)
         {
+            //Elevator buttons trigger this
             ElevatorLogic(e);
             return null;
         }
 
         void ElevatorLogic(Elevator e)
         {
-            //Check if its a replaced elevator
+            //Check if its a plugin replaced elevator
             Esettings ThisElevator = FindServerElevator(e.net.ID);
             if (ThisElevator != null)
             {
                 //Change floors if it is
+                //Check if elevator already triggered
                 if (!Up.Contains(e.net.ID))
                 {
                     GoToFloor(ThisElevator.Floors, e, ThisElevator);
                 }
                 else
                 {
+                    //return to base height
                     GoToFloor(1, e, ThisElevator);
                 }
             }
@@ -230,8 +237,8 @@ namespace Oxide.Plugins
 
         void path(int floor, Elevator e, Esettings eset)
         {
+            //Used for custom positions
             Vector3 vector = new Vector3(0, 0, 0);
-            Puts(floor.ToString());
             if (floor == 1)
             {
                 vector = e.transform.InverseTransformPoint(e.transform.position + new Vector3(0, 1, 0));
@@ -240,7 +247,6 @@ namespace Oxide.Plugins
             {
                 vector = e.transform.InverseTransformPoint(e.transform.position + eset.Custompos);
             }
-            e.LiftSpeedPerMetre = eset.Speed;
             float timeToTravel = e.TimeToTravelDistance(Vector3.Distance(e.transform.position, vector));
             LeanTween.moveLocal(e.liftEntity.gameObject, vector, timeToTravel);
             e.SendNetworkUpdateImmediate();
@@ -253,30 +259,38 @@ namespace Oxide.Plugins
         {
             if (e.HasFlag(BaseEntity.Flags.Busy))
             {
+                //Already moving so ignore command
                 return;
             }
+            //Check what axis to move
             axis = eset.Direction;
+            //Set elevator speed
+            e.LiftSpeedPerMetre = eset.Speed;
             if (axis == 3)
             {
+                //axis 3 = custom position to go to.
                 path(floor, e, eset);
                 return;
             }
-            e.LiftSpeedPerMetre = eset.Speed;
+            //Set up base variables
             Vector3 vector = new Vector3(0, 0, 0);
             float timeToTravel = 0f;
+
             switch (axis)
             {
-
+                //Up Down
                 case 0:
                     vector = e.transform.InverseTransformPoint(e.transform.position + new Vector3(0, floor, 0));
                     timeToTravel = e.TimeToTravelDistance(Mathf.Abs(e.liftEntity.transform.localPosition.y + vector.y));
                     LeanTween.moveLocalY(e.liftEntity.gameObject, vector.y, timeToTravel);
                     break;
+                    //Forward Back
                 case 1:
                     vector = e.transform.InverseTransformPoint(e.transform.position + new Vector3(floor, 0, 0));
                     timeToTravel = e.TimeToTravelDistance(Mathf.Abs(e.liftEntity.transform.localPosition.x + vector.x));
                     LeanTween.moveLocalX(e.liftEntity.gameObject, vector.x, timeToTravel);
                     break;
+                    //Side To Side
                 case 2:
                     vector = e.transform.InverseTransformPoint(e.transform.position + new Vector3(0, 0, floor));
                     timeToTravel = e.TimeToTravelDistance(Mathf.Abs(e.liftEntity.transform.localPosition.z + vector.z));
@@ -285,7 +299,9 @@ namespace Oxide.Plugins
 
             }
             e.SendNetworkUpdateImmediate();
+            //Set busy flag
             e.SetFlag(global::BaseEntity.Flags.Busy, true, false, true);
+            //set timer to disable busy flag
             e.Invoke(new Action(e.ClearBusy), timeToTravel);
             ElevatorEndLogic(floor, e, eset, timeToTravel);
         }
@@ -294,6 +310,7 @@ namespace Oxide.Plugins
         {
             if (floor == 1)
             {
+                //Gone to base position so remove triggered flag
                 if (Up.Contains(e.net.ID))
                 {
                     Up.Remove(e.net.ID);
@@ -301,11 +318,13 @@ namespace Oxide.Plugins
             }
             else
             {
+                //Set a triggered flag
                 if (!Up.Contains(e.net.ID))
                 {
                     Up.Add(e.net.ID);
                 }
             }
+            //Set up auto return based on delay.
             if (eset.AutoReturn)
             {
                 timer.Once(eset.ReturnTime + returndelay, () =>
@@ -345,6 +364,7 @@ namespace Oxide.Plugins
             return null;
         }
 
+        //Chat setup commands
         [ChatCommand("elevator")]
         private void SetSettings(BasePlayer player, string command, string[] args)
         {
